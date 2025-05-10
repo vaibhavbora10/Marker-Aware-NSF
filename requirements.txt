@@ -1,0 +1,12 @@
+tensorflow==2.5.0
+tensorflow-probability==0.13.0
+numpy
+scikit-learn
+matplotlib
+scanpy
+anndata
+pandas
+scipy
+dill
+seaborn
+jupyter
