@@ -19,5 +19,4 @@ Spatial transcriptomics enables the study of gene expression within the spatial 
 ├── training.py                  # Training loop and optimization
 ├── benchmark.py                 # Benchmarking and evaluation utilities
 ├── misc.py                      # Helper functions and utilities
-├── data/                        # Input Visium dataset and spatial files
 └── results                      # Saved spatial scores, figures, and comparisons
