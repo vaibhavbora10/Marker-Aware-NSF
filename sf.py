@@ -58,31 +58,27 @@ class SpatialFactorization(tf.Module):
     feature_means : if input data is centered (for lik='gau', nonneg=False)
     """
     super().__init__(**kwargs)
-    # self.is_spatial=True
     self.ml_weight = ml_weight
     self.lik = lik
     self.isotropic=isotropic
     M,D = Z.shape
     self.Z = tf.Variable(Z, trainable=False, dtype=dtp, name="inducing_points")
     self.nonneg = tf.Variable(nonneg, trainable=False, name="is_non_negative")
-    #variational parameters
     with tf.name_scope("variational"):
-      self.delta = tf.Variable(rng.normal(size=(L,M)), dtype=dtp, name="mean") #LxM
+      self.delta = tf.Variable(rng.normal(size=(L,M)), dtype=dtp, name="mean")
       _Omega_tril = self._init_Omega_tril(L,M,nugget=nugget)
-      # _Omega_tril = .01*tf.eye(M,batch_shape=[L],dtype=dtp)
-      self.Omega_tril=tv(_Omega_tril, tfb.FillScaleTriL(), dtype=dtp, name="covar_tril") #LxMxM
+      self.Omega_tril=tv(_Omega_tril, tfb.FillScaleTriL(), dtype=dtp, name="covar_tril")
       if tf.rank(self.Omega_tril) == 4:
-        self.Omega_tril = tf.squeeze(self.Omega_tril, axis=0)  # ✅ shape [L, M, M]
+        self.Omega_tril = tf.squeeze(self.Omega_tril, axis=0)
       tf.print("self.Omega_tril shape:", tf.shape(self.Omega_tril))
-    #GP hyperparameters
     with tf.name_scope("gp_mean"):
       if self.nonneg:
         prior_mu, prior_sigma = misc.lnormal_approx_dirichlet(max(L,1.1))
         self.beta0 = tf.Variable(prior_mu*tf.ones((L,1)), dtype=dtp,
                                  name="intercepts")
       else:
-        self.beta0 = tf.Variable(tf.zeros((L,1)), dtype=dtp, name="intercepts") #L
-      self.beta = tf.Variable(tf.zeros((L,D)), dtype=dtp, name="slopes") #LxD
+        self.beta0 = tf.Variable(tf.zeros((L,1)), dtype=dtp, name="intercepts")
+      self.beta = tf.Variable(tf.zeros((L,D)), dtype=dtp, name="slopes")
     with tf.name_scope("gp_kernel"):
       self.nugget = tf.Variable(nugget, dtype=dtp, trainable=False, name="nugget")
       self.amplitude = tv(np.tile(1.0,[L]), tfb.Softplus(), dtype=dtp, name="amplitude")
@@ -91,7 +87,7 @@ class SpatialFactorization(tf.Module):
         if marker_dim is None:
             raise ValueError("marker_dim must be provided for MarkerAwareKernel.")
         spatial_dims = D - marker_dim
-        self.kernel = psd_kernel  # assume user passes instantiated kernel
+        self.kernel = psd_kernel
       elif psd_kernel == MarkerAwareKernel:
           if marker_dim is None:
               raise ValueError("marker_dim must be provided for MarkerAwareKernel.")
@@ -119,9 +115,9 @@ class SpatialFactorization(tf.Module):
     #Loadings weights
     if self.nonneg:
       self.W = tf.Variable(rng.exponential(size=(J,L)), dtype=dtp,
-                           constraint=misc.make_nonneg, name="loadings") #JxL
+                           constraint=misc.make_nonneg, name="loadings")
     else:
-      self.W = tf.Variable(rng.normal(size=(J,L)), dtype=dtp, name="loadings") #JxL
+      self.W = tf.Variable(rng.normal(size=(J,L)), dtype=dtp, name="loadings")
     self.psd_kernel = psd_kernel #this is a class, not yet an object
     #likelihood parameters, set defaults
     self._disp0 = disp
@@ -140,27 +136,19 @@ class SpatialFactorization(tf.Module):
     Store must-link index arrays as constant tensors in the model.
     ml_ind1, ml_ind2: 1D arrays or lists of indices (must-link pairs).
     """
-    # Convert indices to TensorFlow constant tensors (int32 or int64 as needed)
     M = self.Z.shape[0]
     ml_pairs = [(int(i), int(j)) for i, j in zip(ml_ind1, ml_ind2) if i < M and j < M]
     if ml_pairs:
         inds1_Z, inds2_Z = zip(*ml_pairs)
     else:
         inds1_Z, inds2_Z = [], []
-    #self.ml_ind1 = tf.constant(ml_ind1, dtype=tf.int64)
-    #self.ml_ind2 = tf.constant(ml_ind2, dtype=tf.int64)
-    #max_idx = tf.reduce_max(tf.concat([self.ml_ind1, self.ml_ind2], axis=0)) + 1
     idx_pairs = tf.concat([
-        #tf.stack([self.ml_ind1, self.ml_ind2], axis=1)
         tf.stack([inds1_Z, inds2_Z], axis=1),
         tf.stack([inds2_Z, inds1_Z], axis=1)
-        #tf.stack([self.ml_ind2, self.ml_ind1], axis=1)
     ], axis=0)
     mask_vals = tf.ones((tf.shape(idx_pairs)[0],), dtype=tf.bool)
     full_mask_Z = tf.scatter_nd(idx_pairs, mask_vals, shape=(M, M))
-    #full_mask = tf.scatter_nd(idx_pairs, mask_vals, shape=(max_idx, max_idx))
     if isinstance(self.kernel, MarkerAwareKernel):
-        #self.kernel.full_must_link_mask = full_mask
       self.kernel.full_must_link_mask = full_mask_Z
   @staticmethod
   def _init_Omega_tril(L, M, nugget=None):
@@ -170,11 +158,8 @@ class SpatialFactorization(tf.Module):
     L: number of latent dimensions (factors)
     M: number of inducing points
     """
-    #note most of these operations are in float64 by default
-    #the 0.01 below is to make the elbo more numerically stable at initialization
-    Omega_sqt = 0.01*rng.normal(size=(L,M,M)) #LxMxM
-    Omega = [Omega_sqt[l,:,:]@ Omega_sqt[l,:,:].T for l in range(L)] #list len L, elements MxM
-    # Omega += nugget*np.eye(M)
+    Omega_sqt = 0.01*rng.normal(size=(L,M,M))
+    Omega = [Omega_sqt[l,:,:]@ Omega_sqt[l,:,:].T for l in range(L)]
     res = np.stack([np.linalg.cholesky(Omega[l]) for l in range(L)], axis=0)
     return res.astype(dtp)
 
@@ -239,28 +224,21 @@ class SpatialFactorization(tf.Module):
     if kernel is None:
       kernel = self.get_kernel()
     M,D = self.Z.shape
-    # If MarkerAwareKernel, set mask for inducing points
     base_kernel = kernel.kernel if isinstance(kernel, tfk.FeatureScaled) else kernel
     if isinstance(base_kernel, MarkerAwareKernel):
       base_kernel.set_mask_for_indices(tf.range(M))
-    #if isinstance(kernel, tfk.FeatureScaled) and isinstance(kernel.kernel, MarkerAwareKernel):
-    #  kernel.kernel.set_mask_for_indices(tf.range(M))  # Apply full Z points
-    #if hasattr(self.kernel, "set_mask_for_indices"):
-    #  self.kernel.set_mask_for_indices(tf.range(M), tf.range(M))
     if hasattr(kernel, "set_mask_for_indices"):
         M = tf.shape(self.Z)[0]
         kernel.set_mask_for_indices(tf.range(M), tf.range(M))
-
     Kuu = kernel.matrix(self.Z, self.Z) + self.nugget*tf.eye(M)
-    #Kuu_chol is LxMxM and lower triangular in last two dims
     return tfl.cholesky(Kuu)
 
   def get_Kuu_chol(self, kernel=None, from_cache=False):
     if not from_cache:
       Kuu_chol = self.eval_Kuu_chol(kernel=kernel)
-      self.Kuu_chol.assign(Kuu_chol) #update cache
+      self.Kuu_chol.assign(Kuu_chol)
       return Kuu_chol
-    else: #use cached variable, gradients cannot propagate to kernel hps
+    else:
       return self.Kuu_chol
 
   def get_mu_z(self):
@@ -290,57 +268,39 @@ class SpatialFactorization(tf.Module):
       Kuu_chol = self.get_Kuu_chol(kernel=kernel, from_cache=(not chol))
       tf.print("Kuu_chol shape:", tf.shape(Kuu_chol))
     if tf.rank(Kuu_chol) == 4:
-      Kuu_chol = tf.squeeze(Kuu_chol, axis=0)  # ✅ Make sure shape is [L, M, M]
+      Kuu_chol = tf.squeeze(Kuu_chol, axis=0)
       tf.print("Kuu_chol shape:", tf.shape(Kuu_chol))
-    #N = X.shape[0]
     N = tf.shape(X)[0]
     L = self.W.shape[1]
-    mu_x = self.beta0+tfl.matmul(self.beta, X, transpose_b=True) #LxN
-    #base_kernel = kernel.kernel if isinstance(kernel, tfp.math.psd_kernels.FeatureScaled) else kernel
+    mu_x = self.beta0+tfl.matmul(self.beta, X, transpose_b=True)
     if hasattr(kernel, "set_mask_for_indices"):
-      # N is batch size from X
       N = tf.shape(X)[0]
       idx = tf.range(N)
       kernel.set_mask_for_indices(idx, idx)
-    Kuf = kernel.matrix(self.Z, X) #LxMxN
+    Kuf = kernel.matrix(self.Z, X)
     if tf.rank(Kuf) == 4:
-        Kuf = tf.squeeze(Kuf, axis=0)  # ✅ Ensure shape is [L, M, N]
+        Kuf = tf.squeeze(Kuf, axis=0)
     tf.print("Kuf shape:", tf.shape(Kuf))
-    # Before computing kernel.matrix(X, X), set proper masks if MarkerAwareKernel
-    Kff = kernel.matrix(X, X)  # could be [1, L, N, N] or [L, N, N]
+    Kff = kernel.matrix(X, X)
     Kff = tf.cond(
         tf.equal(tf.rank(Kff), 4),
-        lambda: tf.squeeze(Kff, axis=0),  # squeeze [1, L, N, N] -> [L, N, N]
+        lambda: tf.squeeze(Kff, axis=0),
         lambda: Kff
     )
-    Kff_diag = tf.linalg.diag_part(Kff)  # shape [L, N]
-    #Kff_diag = kernel.apply(X, X, example_ndims=1)#+self.nugget #LxN
-    alpha_x = tfl.cholesky_solve(Kuu_chol, Kuf) #LxMxN
+    Kff_diag = tf.linalg.diag_part(Kff)
+    alpha_x = tfl.cholesky_solve(Kuu_chol, Kuf)
     if tf.rank(alpha_x) == 4:
-        alpha_x = tf.squeeze(alpha_x, axis=0)  # Force to [L, M, N]
+        alpha_x = tf.squeeze(alpha_x, axis=0)
     tf.print("alpha_x shape:", tf.shape(alpha_x))
-    mu_tilde = mu_x + tfl.matvec(alpha_x, self.delta-mu_z, transpose_a=True) #LxN
-    #compute the alpha(x_i)'(K_uu-Omega)alpha(x_i) term
-    #a_t_Kchol = tf.linalg.matmul(alpha_x, Kuu_chol, transpose_a=True) #LxNxM
-    #aKa = tf.reduce_sum(tf.square(a_t_Kchol), axis=2) #LxN
-    #a_t_Omega_tril = tf.linalg.matmul(alpha_x, self.Omega_tril, transpose_a=True) #LxNxM
-    #aOmega_a = tf.reduce_sum(tf.square(a_t_Omega_tril), axis=2) #LxN
-
-    #alpha_x_T = tf.transpose(alpha_x, perm=[0, 2, 1])  # L x N x M
-    #a_t_Kchol = tf.matmul(alpha_x_T, Kuu_chol)         # L x N x M
-    #aKa = tf.reduce_sum(tf.square(a_t_Kchol), axis=2)  # L x N
-
-    #a_t_Omega_tril = tf.matmul(alpha_x_T, self.Omega_tril)  # L x N x M
-    #aOmega_a = tf.reduce_sum(tf.square(a_t_Omega_tril), axis=2)  # L x N
-    aKa = tf.reduce_sum(tf.square(tf.linalg.matmul(Kuu_chol, alpha_x)), axis=1)  # ✅ L x N
-    aOmega_a = tf.reduce_sum(tf.square(tf.linalg.matmul(self.Omega_tril, alpha_x)), axis=1)  # ✅ L x N
-
-    tf.print("Kff_diag shape:", tf.shape(Kff_diag))   # Should be [L, N]
-    tf.print("aKa shape:", tf.shape(aKa))             # Should be [L, N]
-    tf.print("aOmega_a shape:", tf.shape(aOmega_a))   # Should be [L, N]
-    Sigma_tilde = Kff_diag - aKa + aOmega_a #LxN
-    eps = tf.random.normal((S,L,N)) #note this is not the same random generator as self.rng!
-    return mu_tilde + tf.math.sqrt(Sigma_tilde)*eps #"F", dims: SxLxN
+    mu_tilde = mu_x + tfl.matvec(alpha_x, self.delta-mu_z, transpose_a=True)
+    aKa = tf.reduce_sum(tf.square(tf.linalg.matmul(Kuu_chol, alpha_x)), axis=1)
+    aOmega_a = tf.reduce_sum(tf.square(tf.linalg.matmul(self.Omega_tril, alpha_x)), axis=1)
+    tf.print("Kff_diag shape:", tf.shape(Kff_diag))
+    tf.print("aKa shape:", tf.shape(aKa))
+    tf.print("aOmega_a shape:", tf.shape(aOmega_a))
+    Sigma_tilde = Kff_diag - aKa + aOmega_a
+    eps = tf.random.normal((S,L,N))
+    return mu_tilde + tf.math.sqrt(Sigma_tilde)*eps
 
   def sample_predictive_mean(self, X, sz=1, S=1, kernel=None, mu_z=None, Kuu_chol=None, chol=True):
     """
@@ -349,22 +309,22 @@ class SpatialFactorization(tf.Module):
     Typically sz would be the rowSums or rowMeans of the outcome matrix Y.
     """
     F = self.sample_latent_GP_funcs(X, S=S, kernel=kernel, mu_z=mu_z,
-                                    Kuu_chol=Kuu_chol, chol=chol) #SxLxN
+                                    Kuu_chol=Kuu_chol, chol=chol)
     if self.nonneg:
-      Lam = tfl.matrix_transpose(tfl.matmul(self.W, tf.exp(F))) #SxNxJ
+      Lam = tfl.matrix_transpose(tfl.matmul(self.W, tf.exp(F)))
       if self.lik=="gau":
         return Lam
       else:
         sz = tf.convert_to_tensor(sz, dtype=Lam.dtype)
-        sz = tf.reshape(sz, [1, -1, 1])  # ✅ Fix broadcast shape
+        sz = tf.reshape(sz, [1, -1, 1])
         return sz * Lam
     else:
       Lam = tfl.matrix_transpose(tfl.matmul(self.W, F))
-      if self.lik=="gau": #identity link
+      if self.lik=="gau":
         return Lam
-      else: #log link (poi, nb)
+      else:
         sz = tf.convert_to_tensor(sz, dtype=Lam.dtype)
-        sz = tf.reshape(sz, [1, -1, 1])  # Shape: (1, batch_size, 1)
+        sz = tf.reshape(sz, [1, -1, 1])
         return tf.exp(tf.math.log(sz) + Lam)
 
 
@@ -411,35 +371,24 @@ class SpatialFactorization(tf.Module):
     The numeric evidence lower bound value, divided by Ntot.
     """
     batch_size, J = Y.shape
-    print("X shape:", X.shape)  # Full data points
-    if Ntot is None: Ntot = batch_size #no minibatch, all observations provided
+    print("X shape:", X.shape)
+    if Ntot is None: Ntot = batch_size
     ker = self.get_kernel()
     mu_z = self.get_mu_z()
     Kuu_chol = self.get_Kuu_chol(kernel=ker,from_cache=(not chol))
-    #kl_terms is not affected by minibatching so use reduce_sum
     kl_term = tf.reduce_sum(self.eval_kl_term(mu_z, Kuu_chol))
     Mu = self.sample_predictive_mean(X, sz=sz, S=S, kernel=ker, mu_z=mu_z, Kuu_chol=Kuu_chol)
     eloglik = likelihoods.lik_to_distr(self.lik, Mu, self.disp).log_prob(Y)
-    ml_loss = tf.constant(0.0, dtype=eloglik.dtype)  # ✅ Default value when not using constraints
-    # Marker must-link constraint loss
+    ml_loss = tf.constant(0.0, dtype=eloglik.dtype)
     if ml_ind1 is not None and ml_ind2 is not None:
         F = self.sample_latent_GP_funcs(X, S=1, kernel=ker, mu_z=mu_z, Kuu_chol=Kuu_chol)
-        F = tf.reduce_mean(F, axis=0)  # shape L x N
-        F = tf.transpose(F)  # now shape N x L
+        F = tf.reduce_mean(F, axis=0)
+        F = tf.transpose(F)
         F1 = tf.gather(F, ml_ind1, axis=0)
         F2 = tf.gather(F, ml_ind2, axis=0)
         ml_loss = tf.reduce_mean(tf.reduce_sum(tf.square(F1 - F2), axis=1))
         eloglik -= self.ml_weight * ml_loss
-
-    
-    # Add marker constraint loss
-    #F = tf.reduce_mean(F, axis=0)  # Average over samples (N x L)
-    #F1 = tf.gather(F, ml_ind1, axis=0)
-    #F2 = tf.gather(F, ml_ind2, axis=0)
-    #ml_loss = tf.reduce_mean(tf.reduce_sum((F1 - F2)**2, axis=1))
-
     return J*tf.reduce_mean(eloglik) - kl_term/Ntot - self.ml_weight * ml_loss
-    #return J*tf.reduce_mean(eloglik) - kl_term/Ntot
 
   def train_step(self, D, optimizer, optimizer_k, S=1, Ntot=None, chol=True):
     """
@@ -477,7 +426,6 @@ class SpatialFactorization(tf.Module):
     Mu_tr = misc.t2np(self.sample_predictive_mean(Dtr["X"], sz=Dtr["sz"], S=S))
     if self.lik=="gau":
       sz_tr = Dtr["Y"].sum(axis=1)
-      #note self.feature_means is None if self.nonneg=True
       misc.reverse_normalization(Mu_tr, feature_means=self.feature_means,
                             transform=np.expm1, sz=sz_tr, inplace=True)
     if Dval:
@@ -497,11 +445,11 @@ def smooth_spatial_factors(F,Z,X=None):
   X: spatial coordinates
   """
   M = Z.shape[0]
-  if X is None: #no spatial coordinates, just use the mean
+  if X is None:
     beta0 = F.mean(axis=0)
     U = np.tile(beta0,[M,1])
     beta = None
-  else: #spatial coordinates
+  else:
     lr = LinearRegression().fit(X,F)
     beta0 = lr.intercept_
     beta = lr.coef_
@@ -513,7 +461,6 @@ def smooth_spatial_factors(F,Z,X=None):
 def init_nsf_with_nmf(fit, Y, X=None, sz=1, pseudocount=1e-2, factors=None,
                       loadings=None, shrinkage=0.2):
   L = fit.W.shape[1]
-  # M = fit.Z.shape[0] #number of inducing points
   kw = likelihoods.choose_nmf_pars(fit.lik)
   F,W = nnfu.regularized_nmf(Y, L, sz=sz, pseudocount=pseudocount,
                              factors=factors, loadings=loadings,
