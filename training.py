@@ -92,15 +92,11 @@ class ModelTrainer(object): #goal to change this to tf.module?
     """
     self.loss = {"train":np.array([np.nan]), "val":np.array([np.nan])}
     self.model = model
-    #optimizer for all variables except kernel hyperparams
     self.optimizer = tf.optimizers.Adam(learning_rate=lr, **kwargs)
-    #optimizer for kernel hyperparams, does nothing for nonspatial models
     self.optimizer_k = tf.optimizers.Adam(learning_rate=0.01*lr, **kwargs)
     self.epoch = tf.Variable(0,name="epoch")
-    # self.tries = tf.Variable(0,name="number of tries")
     self.ptime = tf.Variable(0.0,name="elapsed process time")
     self.wtime = tf.Variable(0.0,name="elapsed wall time")
-    # self.ckpt_counter = tf.Variable(0,name="checkpoint counter")
     self.ckpt = tf.train.Checkpoint(model=self.model, optimizer=self.optimizer,
                                     optimizer_k=self.optimizer_k,
                                     epoch=self.epoch, ptime=self.ptime,
@@ -218,38 +214,26 @@ class ModelTrainer(object): #goal to change this to tf.module?
     #                                S=S, Ntot=Ntr, chol=False)
     @tf.function
     def train_step(D, chol=True):
-      # if chol: return train_step_chol(D)
-      # else: return train_step_nochol(D)
       '''with tf.GradientTape() as tape:
         loss = -self.model.elbo_avg(D["X"], D["Y"], sz=D["sz"], S=S, Ntot=Ntr, chol=chol)
       gradients = tape.gradient(loss, self.model.trainable_variables)
       self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))'''
-      kernel = self.model.kernel  # could be FeatureScaled or MarkerAwareKernel
+      kernel = self.model.kernel
       base_kernel = kernel.kernel if isinstance(kernel, tfp.math.psd_kernels.FeatureScaled) else kernel
-      #if isinstance(base_kernel, MarkerAwareKernel):
-      #  M = tf.shape(self.model.Z)[0]
-      #  base_kernel.set_mask_for_indices(tf.range(M, dtype=tf.int64), D["idx"])
       tf.print("Batch size:", tf.shape(D["X"])[0])
       tf.print("Mask shape:", tf.shape(base_kernel.active_mask))
       tf.print("Before train_step, mask shape:", tf.shape(base_kernel.active_mask))
       return self.model.train_step(D, self.optimizer, self.optimizer_k, S=1, Ntot=Ntr, chol=chol)
-    cvg = 0 #increment each time we think it has converged
+    cvg = 0
     cc = ConvergenceChecker(span)
     while (not self.converged) and (self.epoch < num_epochs):
       # try:
       epoch_loss = tf.keras.metrics.Mean()
       chol=(self.epoch % kernel_hp_update_freq==0)
-      for D in Dtrain: #iterate through each of the batches
+      for D in Dtrain:
         epoch_loss.update_state(train_step(D,chol=chol))
-        # --- Insert mask update logic ---
         kernel = self.model.get_kernel()
         base_kernel = kernel.kernel if isinstance(kernel, tfk.FeatureScaled) else kernel
-
-        #if isinstance(base_kernel, MarkerAwareKernel):
-        #    M = tf.shape(self.model.Z)[0]  # Inducing point count (usually 100)
-        #   tf.print("Mask shape:", tf.shape(base_kernel.active_mask))
-        # --------------------------------
-
       trl = epoch_loss.result().numpy()
       self.epoch.assign_add(1)
       i = self.epoch.numpy()
