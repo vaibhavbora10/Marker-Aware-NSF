@@ -115,8 +115,6 @@ def unpickle_from_file(fpath):
   """
   import builtins
   from tensorflow_probability.python.util import deferred_tensor
-
-  # Inject globals AFTER importing them
   builtins.tf = tf
   builtins.tfp = tfp
   builtins._wrap_method = deferred_tensor._wrap_method
